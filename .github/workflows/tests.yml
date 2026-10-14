@@ -1,0 +1,43 @@
+name: NoorBot CI
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate Datasets & Schema Integrity
+        run: |
+          python scripts/validate_data.py
+
+      - name: Run Test Suite
+        env:
+          BOT_TOKEN: "123456789:ABCdefGHIjklMNOpqrSTUvwxyz"
+          ADMIN_IDS: "123456789"
+          DATABASE_URL: "sqlite:///test.db"
+          ENVIRONMENT: "testing"
+          PORT: 8080
+        run: |
+          pytest -v --asyncio-mode=auto

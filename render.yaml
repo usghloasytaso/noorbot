@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: noorbot
+    runtime: python
+    plan: free
+    region: frankfurt
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m bot
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_IDS
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: DEFAULT_MARJA
+        value: sistani
+      - key: DEFAULT_TAFSIR
+        value: nemooneh
+      - key: RATE_LIMIT_BURST
+        value: "5"
+      - key: RATE_LIMIT_WINDOW
+        value: "3.0"
