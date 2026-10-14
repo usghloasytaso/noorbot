@@ -1,23 +1,23 @@
 FROM python:3.12-slim
 
-WORKDIR /app
-
+# تنظیم متغیرهای محیطی استاندارد
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV PORT=8080
+ENV PORT=7860
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# ساخت کاربر غیریشه (مورد نیاز Hugging Face Spaces و امنیت کانتینر)
+RUN useradd -m -u 1000 user
+USER user
+ENV HOME=/home/user \
+    PATH=/home/user/.local/bin:$PATH
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+WORKDIR $HOME/app
 
-COPY . .
+COPY --chown=user requirements.txt .
+RUN pip install --no-cache-dir --user -r requirements.txt
 
-EXPOSE 8080
+COPY --chown=user . .
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:${PORT}/health || exit 1
+EXPOSE 7860 8080
 
 CMD ["python", "-m", "bot"]
