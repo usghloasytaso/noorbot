@@ -68,7 +68,7 @@ def test_smart_group_welcome_message():
     text_member, kb_member = build_smart_group_welcome("گروه اهل‌بیت", member_mock, "NoorBot")
     assert "گروه اهل‌بیت" in text_member
     assert "عضو عادی" in text_member
-    assert "یادآوری مهم به مدیران گروه" in text_member
+    assert "یادآوری به مدیران محترم گروه" in text_member
     assert "/istikhara" in text_member
 
     # ۲. حالت مدیر (Administrator)

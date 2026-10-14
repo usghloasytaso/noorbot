@@ -75,7 +75,8 @@ async def main():
         except Exception as e:
             logger.warning("Could not delete webhook (possibly mock token or offline): %s", e)
 
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+        allowed_updates = ["message", "edited_message", "callback_query", "chat_member", "my_chat_member"]
+        await dp.start_polling(bot, allowed_updates=allowed_updates)
     except (asyncio.CancelledError, KeyboardInterrupt):
         logger.info("Shutdown signal received.")
     except Exception as e:
