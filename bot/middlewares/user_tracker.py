@@ -42,6 +42,13 @@ class UserTrackerMiddleware(BaseMiddleware):
                 data["user"] = db_user
             except Exception as e:
                 logger.warning("Error tracking user %s: %s", telegram_user.id, e)
+                data["user"] = User(
+                    telegram_id=telegram_user.id,
+                    username=telegram_user.username,
+                    first_name=telegram_user.first_name,
+                    last_name=telegram_user.last_name,
+                    language_code=telegram_user.language_code or "fa"
+                )
 
         # ثبت یا به‌روزرسانی گروه
         if chat and chat.type in ("group", "supergroup"):
@@ -55,5 +62,11 @@ class UserTrackerMiddleware(BaseMiddleware):
                 data["group"] = db_group
             except Exception as e:
                 logger.warning("Error tracking group %s: %s", chat.id, e)
+                data["group"] = Group(
+                    chat_id=chat.id,
+                    title=chat.title or "گروه",
+                    username=chat.username,
+                    chat_type=chat.type
+                )
 
         return await handler(event, data)

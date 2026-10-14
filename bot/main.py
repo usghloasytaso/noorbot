@@ -71,7 +71,7 @@ async def main():
     try:
         # حذف وب‌هوک‌های قدیمی در صورت وجود برای تضمین عملکرد صحیح polling
         try:
-            await bot.delete_webhook(drop_pending_updates=True)
+            await bot.delete_webhook(drop_pending_updates=False)
         except Exception as e:
             logger.warning("Could not delete webhook (possibly mock token or offline): %s", e)
 

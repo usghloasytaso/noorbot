@@ -44,15 +44,17 @@ class DatabaseManager:
                 ssl_context.check_hostname = False
                 ssl_context.verify_mode = ssl.CERT_NONE
 
-            # حذف پارامترهای query string از url برای asyncpg
             clean_url = self.url.split("?")[0]
             try:
-                self._pg_pool = await asyncpg.create_pool(
-                    dsn=clean_url,
-                    min_size=1,
-                    max_size=10,
-                    ssl=ssl_context,
-                    command_timeout=30.0
+                self._pg_pool = await asyncio.wait_for(
+                    asyncpg.create_pool(
+                        dsn=clean_url,
+                        min_size=1,
+                        max_size=10,
+                        ssl=ssl_context,
+                        command_timeout=15.0
+                    ),
+                    timeout=5.0
                 )
                 logger.info("Connected to PostgreSQL successfully.")
             except Exception as e:

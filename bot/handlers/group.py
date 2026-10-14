@@ -114,7 +114,7 @@ async def on_my_chat_member_updated(event: ChatMemberUpdated):
     new_status = event.new_chat_member.status
     logger.info("Chat %s (%s): bot status changed: %s -> %s", event.chat.title, event.chat.id, old_status, new_status)
 
-    # الف) اگر ربات از گروه خارج شد یا ریمو شد
+    # الف) اگر ربات از گروه خارج شد یا اخراج شد
     if new_status in ("left", "kicked"):
         try:
             await GroupRepository.set_active(event.chat.id, False)
@@ -122,39 +122,8 @@ async def on_my_chat_member_updated(event: ChatMemberUpdated):
             logger.warning("Could not deactivate group %s: %s", event.chat.id, e)
         return
 
-    # ب) اگر ربات به گروه اضافه شد (ورود اولیه)
-    if old_status in ("left", "kicked", "restricted") and new_status in ("member", "administrator"):
-        try:
-            await GroupRepository.upsert_group(
-                chat_id=event.chat.id,
-                title=event.chat.title,
-                username=event.chat.username,
-                chat_type=event.chat.type
-            )
-        except Exception as e:
-            logger.warning("DB upsert group failed: %s", e)
-
-        bot_user = event.new_chat_member.user
-        text, kb = build_smart_group_welcome(
-            chat_title=event.chat.title or "گروه",
-            bot_member=event.new_chat_member,
-            bot_username=bot_user.username or "NoorBot"
-        )
-
-        try:
-            await event.bot.send_message(
-                chat_id=event.chat.id,
-                text=text,
-                reply_markup=kb,
-                parse_mode="HTML"
-            )
-            logger.info("Successfully sent welcome message to group %s", event.chat.id)
-        except Exception as e:
-            logger.error("Could not send welcome message to group %s: %s", event.chat.id, e)
-        return
-
-    # ج) اگر ربات از عضو عادی به ادمین ارتقا یافت
-    if old_status == "member" and new_status == "administrator":
+    # ب) اگر ربات از قبل عضو بود و حالا ارتقا یافته به ادمین
+    if old_status == "member" and new_status in ("administrator", "creator"):
         text = (
             "🛡 <b>دسترسی مدیریتی ربات نور با موفقیت تایید شد!</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
@@ -177,6 +146,61 @@ async def on_my_chat_member_updated(event: ChatMemberUpdated):
             logger.info("Successfully sent admin promotion message to group %s", event.chat.id)
         except Exception as e:
             logger.error("Could not send admin promotion message: %s", e)
+        return
+
+    # ج) اگر ربات به هر ترتیبی در گروه حضور فعال پیدا کرد (عضو عادی یا ادمین اولیه)
+    if new_status in ("member", "administrator"):
+        try:
+            await GroupRepository.upsert_group(
+                chat_id=event.chat.id,
+                title=event.chat.title,
+                username=event.chat.username,
+                chat_type=event.chat.type
+            )
+        except Exception as e:
+            logger.warning("DB upsert group failed: %s", e)
+
+        bot_user = event.new_chat_member.user
+        bot_username = bot_user.username if bot_user and bot_user.username else None
+        if not bot_username:
+            try:
+                me = await event.bot.get_me()
+                bot_username = me.username
+            except Exception:
+                bot_username = "NoorReligious_bot"
+
+        text, kb = build_smart_group_welcome(
+            chat_title=event.chat.title or "گروه",
+            bot_member=event.new_chat_member,
+            bot_username=bot_username or "NoorReligious_bot"
+        )
+
+        try:
+            await event.bot.send_message(
+                chat_id=event.chat.id,
+                text=text,
+                reply_markup=kb,
+                parse_mode="HTML"
+            )
+            logger.info("Successfully sent welcome message to group %s", event.chat.id)
+        except Exception as e:
+            logger.error("Could not send welcome message to group %s: %s. Trying plain text fallback...", event.chat.id, e)
+            try:
+                plain_msg = (
+                    f"🌸 سلام و درود بر اعضای محترم گروه {event.chat.title or ''}\n\n"
+                    "من ربات جامع قرآنی و مذهبی نور (NoorBot) هستم.\n"
+                    "برای استفاده از امکانات لطفا دستورات زیر را بفرستید:\n"
+                    "/istikhara - استخاره با قرآن کریم\n"
+                    "/ayah - آیه نورانی روز\n"
+                    "/daily - تقویم و ذکر روز\n"
+                    "/prayer - اوقات شرعی\n"
+                    "/tasbih - تسبیح‌شمار هوشمند\n"
+                    "/settings - تنظیمات گروه (مخصوص مدیران)"
+                )
+                await event.bot.send_message(chat_id=event.chat.id, text=plain_msg)
+            except Exception as e2:
+                logger.error("Plain text fallback failed: %s", e2)
+        return
 
 
 # ۲. رویداد پیامِ اضافه شدن اعضای جدید (New Chat Members)
@@ -207,13 +231,27 @@ async def on_new_chat_members(message: Message):
         text, kb = build_smart_group_welcome(
             chat_title=message.chat.title or "گروه",
             bot_member=bot_member,
-            bot_username=bot_info.username or "NoorBot"
+            bot_username=bot_info.username or "NoorReligious_bot"
         )
         try:
             await message.answer(text=text, reply_markup=kb, parse_mode="HTML")
             logger.info("Sent welcome message via new_chat_members to %s", message.chat.id)
         except Exception as e:
-            logger.error("Failed to answer new_chat_members in %s: %s", message.chat.id, e)
+            logger.error("Failed to answer new_chat_members in %s: %s. Trying plain text...", message.chat.id, e)
+            try:
+                plain_msg = (
+                    f"🌸 سلام و درود بر اعضای محترم گروه {message.chat.title or ''}\n\n"
+                    "من ربات جامع قرآنی و مذهبی نور (NoorBot) هستم.\n"
+                    "/istikhara - استخاره با قرآن کریم\n"
+                    "/ayah - آیه نورانی روز\n"
+                    "/daily - تقویم و ذکر روز\n"
+                    "/prayer - اوقات شرعی\n"
+                    "/tasbih - تسبیح‌شمار هوشمند\n"
+                    "/settings - تنظیمات گروه (مخصوص مدیران)"
+                )
+                await message.answer(text=plain_msg)
+            except Exception as e2:
+                logger.error("Plain fallback failed: %s", e2)
 
 
 @router.message(Command("start"), F.chat.type.in_({"group", "supergroup"}))
@@ -224,8 +262,45 @@ async def cmd_start_group(message: Message):
     except Exception:
         bot_member = message.bot
 
-    text, kb = build_smart_group_welcome(message.chat.title or "گروه", bot_member, bot_info.username)
-    await message.answer(text=text, reply_markup=kb, parse_mode="HTML")
+    text, kb = build_smart_group_welcome(message.chat.title or "گروه", bot_member, bot_info.username or "NoorReligious_bot")
+    try:
+        await message.answer(text=text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        plain_msg = (
+            f"🌸 سلام و درود بر اعضای محترم گروه {message.chat.title or ''}\n\n"
+            "من ربات جامع قرآنی و مذهبی نور (NoorBot) هستم.\n"
+            "/istikhara - استخاره با قرآن کریم\n"
+            "/ayah - آیه نورانی روز\n"
+            "/daily - تقویم و ذکر روز\n"
+            "/prayer - اوقات شرعی\n"
+            "/tasbih - تسبیح‌شمار هوشمند\n"
+            "/settings - تنظیمات گروه (مخصوص مدیران)"
+        )
+        await message.answer(text=plain_msg)
+
+
+@router.message(Command("help"), F.chat.type.in_({"group", "supergroup"}))
+async def cmd_help_group(message: Message):
+    bot_info = await message.bot.get_me()
+    try:
+        bot_member = await message.bot.get_chat_member(chat_id=message.chat.id, user_id=bot_info.id)
+    except Exception:
+        bot_member = message.bot
+
+    text, kb = build_smart_group_welcome(message.chat.title or "گروه", bot_member, bot_info.username or "NoorReligious_bot")
+    try:
+        await message.answer(text=text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        plain_msg = (
+            f"🌸 راهنمای دستورات ربات نور در گروه {message.chat.title or ''}:\n\n"
+            "/istikhara - استخاره با قرآن کریم\n"
+            "/ayah - آیه نورانی روز\n"
+            "/daily - تقویم و ذکر روز\n"
+            "/prayer - اوقات شرعی\n"
+            "/tasbih - تسبیح‌شمار هوشمند\n"
+            "/settings - تنظیمات گروه (مخصوص مدیران)"
+        )
+        await message.answer(text=plain_msg)
 
 
 @router.message(Command("settings"), F.chat.type.in_({"group", "supergroup"}))
