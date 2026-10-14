@@ -164,6 +164,11 @@ class GroupRepository:
         await db.execute(query, val_ist, val_priv, val_ayah, chat_id)
 
     @staticmethod
+    async def set_active(chat_id: int, is_active: bool):
+        val = 1 if is_active else 0
+        await db.execute("UPDATE groups SET is_active = $1, updated_at = CURRENT_TIMESTAMP WHERE chat_id = $2", val, chat_id)
+
+    @staticmethod
     async def count_groups() -> int:
         query = "SELECT COUNT(*) FROM groups WHERE is_active = 1" if db.is_sqlite else "SELECT COUNT(*) FROM groups WHERE is_active = TRUE"
         val = await db.fetchval(query)
