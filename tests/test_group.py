@@ -81,3 +81,41 @@ def test_smart_group_welcome_message():
     assert "مدیر (Administrator)" in text_admin
     assert "دسترسی‌های لازم تایید شد" in text_admin
     assert "حذف پیام‌های منسوخ" in text_admin
+
+
+def test_user_group_keyboards():
+    from bot.keyboards.group_kb import (
+        get_group_marja_picker_kb,
+        get_group_profile_kb,
+        get_group_tafsir_picker_kb,
+        get_group_tasbih_kb,
+        get_user_group_istikhara_kb,
+    )
+
+    # تست کیبورد استخاره در گروه
+    kb_ist = get_user_group_istikhara_kb(12345, "sistani", "nemooneh", "NoorReligious_bot")
+    assert len(kb_ist.inline_keyboard) == 2
+    buttons = [b.text for row in kb_ist.inline_keyboard for b in row]
+    assert any("تغییر مرجع (سیستانی)" in b for b in buttons)
+    assert any("تغییر تفسیر (نمونه)" in b for b in buttons)
+    assert any("استخاره مجدد" in b for b in buttons)
+
+    # تست کیبورد انتخاب مرجع
+    kb_m = get_group_marja_picker_kb(12345, "khamenei")
+    m_buttons = [b.text for row in kb_m.inline_keyboard for b in row]
+    assert any("رهبر معظم انقلاب ✅" in b for b in m_buttons)
+
+    # تست کیبورد انتخاب تفسیر
+    kb_t = get_group_tafsir_picker_kb(12345, "al-mizan")
+    t_buttons = [b.text for row in kb_t.inline_keyboard for b in row]
+    assert any("تفسیر المیزان ✅" in b for b in t_buttons)
+
+    # تست کیبورد صلوات‌شمار گروهی
+    kb_salawat = get_group_tasbih_kb(14)
+    s_buttons = [b.text for row in kb_salawat.inline_keyboard for b in row]
+    assert any("14" in b for b in s_buttons)
+
+    # تست کیبورد پروفایل گروه
+    kb_prof = get_group_profile_kb(12345, "sistani", "nemooneh", "NoorReligious_bot")
+    assert len(kb_prof.inline_keyboard) == 2
+

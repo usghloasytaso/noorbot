@@ -18,10 +18,18 @@ from aiogram.types import (
 )
 
 from bot.db.models import Group, User
-from bot.db.repository import GroupRepository, IstikharaRepository
-from bot.keyboards.group_kb import get_group_settings_keyboard
+from bot.db.repository import GroupRepository, IstikharaRepository, StatsRepository, UserRepository
+from bot.keyboards.group_kb import (
+    get_group_marja_picker_kb,
+    get_group_profile_kb,
+    get_group_settings_keyboard,
+    get_group_tafsir_picker_kb,
+    get_group_tasbih_kb,
+    get_user_group_istikhara_kb,
+)
 from bot.services.calendar_service import CalendarService
 from bot.services.istikhara_service import IstikharaService
+from bot.services.prayer_service import PrayerService
 from bot.services.quran_service import QuranService
 
 logger = logging.getLogger("handler.group")
@@ -77,12 +85,13 @@ def build_smart_group_welcome(chat_title: str, bot_member, bot_username: str) ->
         "من <b>ربات جامع مذهبی و قرآنی نور (NoorBot)</b> هستم؛ مایهٔ افتخار است که در جمع معنوی و پربرکت شما حضور دارم.\n\n"
         f"{perm_box}\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "📌 <b>دستورات و امکانات فعال در این گروه:</b>\n"
-        "▫️ <code>/istikhara</code> - استخاره با قرآن کریم (با امکان دریافت در پی‌وی جهت حفظ خلوت نیت)\n"
-        "▫️ <code>/ayah</code> - دریافت آیه نورانی روز به همراه ترجمه\n"
-        "▫️ <code>/daily</code> - تقویم روز، مناسبت‌های مذهبی، ذکر و حدیث روز\n"
-        "▫️ <code>/prayer</code> - اوقات شرعی شهرهای ایران و عتبات عالیات\n"
-        "▫️ <code>/tasbih</code> - تسبیح‌شمار تعاملی و هوشمند\n"
+        "📌 <b>دستورات و کلمات کلیدی فعال در این گروه:</b>\n"
+        "▫️ نوشتن کلمه <b>«استخاره»</b> یا <code>/istikhara</code> - استخاره با قرآن کریم متناسب با مرجع و تفسیر شما\n"
+        "▫️ <code>/profile</code> یا نوشتن <b>«پروفایل»</b> - مشاهده و تغییر مرجع تقلید و تفسیر شما مستقیم در گروه\n"
+        "▫️ <code>/ayah</code> یا نوشتن <b>«آیه»</b> - دریافت آیه نورانی روز به همراه ترجمه\n"
+        "▫️ <code>/daily</code> یا نوشتن <b>«تقویم»</b> یا <b>«ذکر روز»</b> - تقویم روز، مناسبت‌های مذهبی و ذکر روز\n"
+        "▫️ <code>/prayer</code> یا نوشتن <b>«اوقات شرعی»</b> - اوقات شرعی به افق شهرهای مختلف\n"
+        "▫️ <code>/tasbih</code> یا نوشتن <b>«صلوات»</b> - تسبیح‌شمار و صلوات جمعی گروهی با دکمه تعاملی\n"
         "▫️ <code>/settings</code> - پنل تنظیمات گروه (مخصوص مدیران گروه)\n"
         "▫️ <code>/help</code> - راهنمای جامع و فهرست دستورات\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
@@ -375,54 +384,337 @@ async def cb_group_refresh(call: CallbackQuery):
     await call.answer("🔄 به‌روز شد.")
 
 
-@router.message(Command("istikhara"), F.chat.type.in_({"group", "supergroup"}))
-async def cmd_istikhara_group(message: Message):
+# ۳. استخاره هوشمند در گروه (دستور /istikhara یا ارسال متن «استخاره»)
+@router.message(Command("istikhara", "estekhare"), F.chat.type.in_({"group", "supergroup"}))
+@router.message(F.text.func(lambda t: t and "استخاره" in t), F.chat.type.in_({"group", "supergroup"}))
+async def handle_group_istikhara(message: Message):
     group = await GroupRepository.get_by_id(message.chat.id)
     if group and not group.allow_istikhara:
         await message.reply("⚠️ قابلیت استخاره توسط مدیران در این گروه غیرفعال شده است.")
         return
 
-    bot_info = await message.bot.get_me()
+    user_id = message.from_user.id
+    user = await UserRepository.get_by_id(user_id)
+    if not user:
+        try:
+            user = await UserRepository.upsert_user(
+                telegram_id=user_id,
+                username=message.from_user.username,
+                first_name=message.from_user.first_name,
+                last_name=message.from_user.last_name,
+                language_code=message.from_user.language_code or "fa"
+            )
+        except Exception:
+            user = User(telegram_id=user_id, username=message.from_user.username, first_name=message.from_user.first_name)
 
-    # در صورت فعال‌بودن حالت حریم خصوصی، ارسال نتیجه در پی‌وی کاربر انجام می‌شود
-    if not group or group.private_result_mode:
-        clean_user = bot_info.username.lstrip("@")
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="🔒 انجام و مشاهده استخاره در پی‌وی",
-                        url=f"https://t.me/{clean_user}?start=istikhara"
-                    )
-                ]
-            ]
+    marja = user.selected_marja or "sistani"
+    tafsir = user.selected_tafsir or "nemooneh"
+
+    marja_titles = {
+        "sistani": "آیت‌الله سیستانی",
+        "khamenei": "رهبر انقلاب",
+        "makarem": "آیت‌الله مکارم"
+    }
+    tafsir_titles = {
+        "nemooneh": "تفسیر نمونه",
+        "al-mizan": "تفسیر المیزان",
+        "majma-al-bayan": "مجمع‌البیان"
+    }
+    m_name = marja_titles.get(marja, "آیت‌الله سیستانی")
+    t_name = tafsir_titles.get(tafsir, "تفسیر نمونه")
+
+    # انجام استخاره معتبر شیعه بر مبنای مصحف عثمانی ۶۰۴ صفحه‌ای
+    result = IstikharaService.perform_istikhara()
+    try:
+        await IstikharaRepository.add_record(
+            telegram_id=user_id,
+            surah_number=result.get("surah_number", 1),
+            surah_name=result.get("surah_name", "قرآن"),
+            ayah_number=result.get("ayah_number", 1),
+            page_number=result.get("page", 1),
+            result_code=result.get("result_code", "good"),
+            result_title=result.get("result_title", ""),
+            intent_topic=f"استخاره در گروه {message.chat.title or ''}"
         )
-        await message.reply(
-            text=(
-                f"👤 {message.from_user.mention_html()}\n"
-                "🔒 <b>جهت حفظ حریم خصوصی نیت شما و عدم شلوغی گروه:</b>\n"
-                "لطفاً جهت انجام استخاره و دریافت نتیجه، دکمه زیر را لمس کرده و وارد گفتگوی خصوصی شوید."
-            ),
-            reply_markup=kb,
-            parse_mode="HTML"
-        )
+        await StatsRepository.increment("total_istikharas")
+    except Exception as e:
+        logger.warning("Failed to record istikhara in group: %s", e)
+
+    formatted = IstikharaService.format_istikhara_message(result, marja=marja, tafsir=tafsir)
+    header = (
+        f"👤 <b>استخاره اختصاصی برای {message.from_user.mention_html()}</b>\n"
+        f"▫️ <b>مرجع:</b> {m_name} | <b>تفسیر:</b> {t_name}\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+    )
+    full_text = header + formatted
+
+    bot_info = await message.bot.get_me()
+    kb = get_user_group_istikhara_kb(
+        user_id=user_id,
+        marja=marja,
+        tafsir=tafsir,
+        bot_username=bot_info.username or "NoorReligious_bot"
+    )
+
+    try:
+        await message.reply(text=full_text, reply_markup=kb, parse_mode="HTML")
+    except Exception as e:
+        logger.error("Failed to reply istikhara in group: %s", e)
+        try:
+            await message.reply(
+                text=f"استخاره برای {message.from_user.full_name}:\n\nنتیجه: {result.get('result_title')}\nسوره: {result.get('surah_name')}\nآیه: {result.get('ayah_number')}\n\n«{result.get('translation')}»"
+            )
+        except Exception:
+            pass
+
+
+# ۴. مدیریت دکمه‌های استخاره و تغییر مرجع/تفسیر در گروه
+@router.callback_query(F.data.startswith("grp_m_menu:"), F.message.chat.type.in_({"group", "supergroup"}))
+async def cb_grp_marja_menu(call: CallbackQuery):
+    target_id = int(call.data.split(":")[1])
+    if call.from_user.id != target_id:
+        await call.answer("⚠️ این دکمه فقط مخصوص صاحب استخاره است. برای خودتان کلمه «استخاره» را بنویسید.", show_alert=True)
+        return
+    user = await UserRepository.get_by_id(target_id)
+    current_m = user.selected_marja if user else "sistani"
+    kb = get_group_marja_picker_kb(target_id, current_m)
+    await call.message.edit_reply_markup(reply_markup=kb)
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("grp_set_m:"), F.message.chat.type.in_({"group", "supergroup"}))
+async def cb_grp_set_marja(call: CallbackQuery):
+    parts = call.data.split(":")
+    target_id = int(parts[1])
+    new_marja = parts[2]
+    if call.from_user.id != target_id:
+        await call.answer("⚠️ این دکمه فقط مخصوص صاحب استخاره است.", show_alert=True)
         return
 
-    # ارسال عمومی در گروه
+    await UserRepository.update_marja(target_id, new_marja)
+    marja_names = {"sistani": "آیت‌الله سیستانی", "khamenei": "رهبر معظم انقلاب", "makarem": "آیت‌الله مکارم شیرازی"}
+    name = marja_names.get(new_marja, new_marja)
+
+    bot_info = await call.bot.get_me()
+    user = await UserRepository.get_by_id(target_id)
+    tafsir = user.selected_tafsir if user else "nemooneh"
+    kb = get_user_group_istikhara_kb(target_id, new_marja, tafsir, bot_info.username or "NoorReligious_bot")
+    await call.message.edit_reply_markup(reply_markup=kb)
+    await call.answer(f"✅ مرجع تقلید شما به «{name}» تغییر یافت و ذخیره شد.", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("grp_t_menu:"), F.message.chat.type.in_({"group", "supergroup"}))
+async def cb_grp_tafsir_menu(call: CallbackQuery):
+    target_id = int(call.data.split(":")[1])
+    if call.from_user.id != target_id:
+        await call.answer("⚠️ این دکمه فقط مخصوص صاحب استخاره است.", show_alert=True)
+        return
+    user = await UserRepository.get_by_id(target_id)
+    current_t = user.selected_tafsir if user else "nemooneh"
+    kb = get_group_tafsir_picker_kb(target_id, current_t)
+    await call.message.edit_reply_markup(reply_markup=kb)
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("grp_set_t:"), F.message.chat.type.in_({"group", "supergroup"}))
+async def cb_grp_set_tafsir(call: CallbackQuery):
+    parts = call.data.split(":")
+    target_id = int(parts[1])
+    new_tafsir = parts[2]
+    if call.from_user.id != target_id:
+        await call.answer("⚠️ این دکمه فقط مخصوص صاحب استخاره است.", show_alert=True)
+        return
+
+    await UserRepository.update_tafsir(target_id, new_tafsir)
+    tafsir_names = {"nemooneh": "تفسیر نمونه", "al-mizan": "تفسیر المیزان", "majma-al-bayan": "مجمع‌البیان"}
+    name = tafsir_names.get(new_tafsir, new_tafsir)
+
+    bot_info = await call.bot.get_me()
+    user = await UserRepository.get_by_id(target_id)
+    marja = user.selected_marja if user else "sistani"
+    kb = get_user_group_istikhara_kb(target_id, marja, new_tafsir, bot_info.username or "NoorReligious_bot")
+    await call.message.edit_reply_markup(reply_markup=kb)
+    await call.answer(f"✅ تفسیر شما به «{name}» تغییر یافت و ذخیره شد.", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("grp_back_ist:"), F.message.chat.type.in_({"group", "supergroup"}))
+async def cb_grp_back_istikhara(call: CallbackQuery):
+    target_id = int(call.data.split(":")[1])
+    user = await UserRepository.get_by_id(target_id)
+    marja = user.selected_marja if user else "sistani"
+    tafsir = user.selected_tafsir if user else "nemooneh"
+    bot_info = await call.bot.get_me()
+    kb = get_user_group_istikhara_kb(target_id, marja, tafsir, bot_info.username or "NoorReligious_bot")
+    await call.message.edit_reply_markup(reply_markup=kb)
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("grp_reist:"), F.message.chat.type.in_({"group", "supergroup"}))
+async def cb_grp_reistikhara(call: CallbackQuery):
+    target_id = int(call.data.split(":")[1])
+    if call.from_user.id != target_id:
+        await call.answer("⚠️ این استخاره برای کاربر دیگری است. جهت دریافت استخاره خودتان، کلمه «استخاره» را بنویسید.", show_alert=True)
+        return
+
+    user = await UserRepository.get_by_id(target_id)
+    marja = user.selected_marja if user else "sistani"
+    tafsir = user.selected_tafsir if user else "nemooneh"
+
+    marja_titles = {"sistani": "آیت‌الله سیستانی", "khamenei": "رهبر انقلاب", "makarem": "آیت‌الله مکارم"}
+    tafsir_titles = {"nemooneh": "تفسیر نمونه", "al-mizan": "تفسیر المیزان", "majma-al-bayan": "مجمع‌البیان"}
+    m_name = marja_titles.get(marja, "آیت‌الله سیستانی")
+    t_name = tafsir_titles.get(tafsir, "تفسیر نمونه")
+
     result = IstikharaService.perform_istikhara()
-    formatted = IstikharaService.format_istikhara_message(result, marja="sistani", tafsir="nemooneh")
-    await message.reply(text=formatted, parse_mode="HTML")
+    try:
+        await IstikharaRepository.add_record(
+            telegram_id=target_id,
+            surah_number=result.get("surah_number", 1),
+            surah_name=result.get("surah_name", "قرآن"),
+            ayah_number=result.get("ayah_number", 1),
+            page_number=result.get("page", 1),
+            result_code=result.get("result_code", "good"),
+            result_title=result.get("result_title", ""),
+            intent_topic="استخاره مجدد در گروه"
+        )
+    except Exception:
+        pass
+
+    formatted = IstikharaService.format_istikhara_message(result, marja=marja, tafsir=tafsir)
+    header = (
+        f"👤 <b>استخاره مجدد برای {call.from_user.mention_html()}</b>\n"
+        f"▫️ <b>مرجع:</b> {m_name} | <b>تفسیر:</b> {t_name}\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+    )
+    full_text = header + formatted
+
+    bot_info = await call.bot.get_me()
+    kb = get_user_group_istikhara_kb(target_id, marja, tafsir, bot_info.username or "NoorReligious_bot")
+    try:
+        await call.message.edit_text(text=full_text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await call.answer("🔄 استخاره جدید با موفقیت محاسبه شد.")
 
 
+# ۵. پروفایل و تنظیمات فقهی کاربر مستقیم در گروه
+@router.message(Command("profile", "myprofile"), F.chat.type.in_({"group", "supergroup"}))
+@router.message(F.text.in_({"پروفایل", "پروفایل من"}), F.chat.type.in_({"group", "supergroup"}))
+async def cmd_grp_profile(message: Message):
+    user_id = message.from_user.id
+    user = await UserRepository.get_by_id(user_id)
+    if not user:
+        try:
+            user = await UserRepository.upsert_user(
+                telegram_id=user_id,
+                username=message.from_user.username,
+                first_name=message.from_user.first_name,
+                last_name=message.from_user.last_name
+            )
+        except Exception:
+            user = User(telegram_id=user_id, username=message.from_user.username, first_name=message.from_user.first_name)
+
+    marja_names = {"sistani": "آیت‌الله سیستانی", "khamenei": "رهبر انقلاب", "makarem": "آیت‌الله مکارم"}
+    tafsir_names = {"nemooneh": "تفسیر نمونه", "al-mizan": "تفسیر المیزان", "majma-al-bayan": "مجمع‌البیان"}
+    m_name = marja_names.get(user.selected_marja, "آیت‌الله سیستانی")
+    t_name = tafsir_names.get(user.selected_tafsir, "تفسیر نمونه")
+
+    text = (
+        f"👤 <b>پروفایل مذهبی شما در ربات نور:</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"▫️ <b>نام:</b> {html.escape(message.from_user.full_name)}\n"
+        f"▫️ <b>مرجع تقلید شما در استخاره:</b> 🟢 <b>{m_name}</b>\n"
+        f"▫️ <b>تفسیر قرآن منتخب:</b> 📚 <b>{t_name}</b>\n"
+        f"▫️ <b>شهر انتخابی اوقات شرعی:</b> 🕌 <b>{user.city}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "<i>استخاره‌هایی که در این گروه یا پی‌وی می‌گیرید، بر اساس این مرجع و تفسیر شخصی شما محاسبه می‌شوند. با دکمه‌های زیر می‌توانید آن‌ها را تغییر دهید:</i>"
+    )
+    bot_info = await message.bot.get_me()
+    kb = get_group_profile_kb(user_id, user.selected_marja, user.selected_tafsir, bot_info.username or "NoorReligious_bot")
+    await message.reply(text=text, reply_markup=kb, parse_mode="HTML")
+
+
+# ۶. صلوات‌شمار و تسبیح جمعی گروهی
+@router.message(Command("tasbih", "salawat"), F.chat.type.in_({"group", "supergroup"}))
+@router.message(F.text.in_({"صلوات", "تسبیح"}), F.chat.type.in_({"group", "supergroup"}))
+async def cmd_grp_tasbih(message: Message):
+    text = (
+        "📿 <b>تسبیح‌شمار و صلوات جمعی در گروه</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "✨ <i>اللّهُمَّ صَلِّ عَلی مُحَمَّدٍ وَ آلِ مُحَمَّدٍ وَ عَجِّلْ فَرَجَهُمْ</i> ✨\n\n"
+        "▫️ <b>شمارش صلوات‌های ثبت‌شده:</b> <code>0</code>\n"
+        "▫️ هر یک از اعضای محترم گروه می‌توانند با لمس دکمه زیر صلوات خود را ثبت نمایند."
+    )
+    await message.answer(text=text, reply_markup=get_group_tasbih_kb(0), parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("grp_salawat:"), F.message.chat.type.in_({"group", "supergroup"}))
+async def cb_grp_salawat_increment(call: CallbackQuery):
+    current_count = int(call.data.split(":")[1])
+    new_count = current_count + 1
+
+    text = (
+        "📿 <b>تسبیح‌شمار و صلوات جمعی در گروه</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "✨ <i>اللّهُمَّ صَلِّ عَلی مُحَمَّدٍ وَ آلِ مُحَمَّدٍ وَ عَجِّلْ فَرَجَهُمْ</i> ✨\n\n"
+        f"▫️ <b>شمارش صلوات‌های ثبت‌شده:</b> <code>{new_count:,}</code>\n"
+        f"▫️ آخرین صلوات توسط: {call.from_user.mention_html()}\n"
+        "🤲 <i>طاعات و عبادات شما قبول درگاه حق.</i>"
+    )
+    try:
+        await call.message.edit_text(text=text, reply_markup=get_group_tasbih_kb(new_count), parse_mode="HTML")
+    except Exception:
+        pass
+    await call.answer("📿 صلوات شما ثبت شد. التماس دعا!")
+
+
+@router.callback_query(F.data == "grp_salawat_reset", F.message.chat.type.in_({"group", "supergroup"}))
+async def cb_grp_salawat_reset(call: CallbackQuery):
+    is_admin = False
+    try:
+        member = await call.bot.get_chat_member(chat_id=call.message.chat.id, user_id=call.from_user.id)
+        is_admin = member.status in ("creator", "administrator")
+    except Exception:
+        pass
+
+    if not is_admin:
+        await call.answer("⚠️ تنها مدیران گروه می‌توانند شمارنده را ریست کنند.", show_alert=True)
+        return
+
+    text = (
+        "📿 <b>تسبیح‌شمار و صلوات جمعی در گروه (بازنشانی شد)</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "✨ <i>اللّهُمَّ صَلِّ عَلی مُحَمَّدٍ وَ آلِ مُحَمَّدٍ وَ عَجِّلْ فَرَجَهُمْ</i> ✨\n\n"
+        "▫️ <b>شمارش صلوات‌های ثبت‌شده:</b> <code>0</code>\n"
+    )
+    await call.message.edit_text(text=text, reply_markup=get_group_tasbih_kb(0), parse_mode="HTML")
+    await call.answer("🔄 شمارنده توسط مدیر بازنشانی شد.")
+
+
+# ۷. دستورات و کلمات کلیدی مذهبی (آیه روز، تقویم و اوقات شرعی)
 @router.message(Command("ayah"), F.chat.type.in_({"group", "supergroup"}))
+@router.message(F.text.in_({"آیه", "آیه روز", "ایه"}), F.chat.type.in_({"group", "supergroup"}))
 async def cmd_ayah_group(message: Message):
     ayah = QuranService.get_daily_ayah()
     text = QuranService.format_daily_ayah_message(ayah)
-    await message.answer(text=text, parse_mode="HTML")
+    await message.reply(text=text, parse_mode="HTML")
 
 
 @router.message(Command("daily"), F.chat.type.in_({"group", "supergroup"}))
+@router.message(F.text.in_({"تقویم", "ذکر روز", "مناسبت", "امروز"}), F.chat.type.in_({"group", "supergroup"}))
 async def cmd_daily_group(message: Message):
     today_info = CalendarService.get_today_info()
     text = CalendarService.format_daily_content(today_info)
-    await message.answer(text=text, parse_mode="HTML")
+    await message.reply(text=text, parse_mode="HTML")
+
+
+@router.message(Command("prayer", "azan"), F.chat.type.in_({"group", "supergroup"}))
+@router.message(F.text.in_({"اوقات شرعی", "اذان"}), F.chat.type.in_({"group", "supergroup"}))
+async def cmd_prayer_group(message: Message):
+    user = await UserRepository.get_by_id(message.from_user.id)
+    city = user.city if user else "تهران"
+    method = user.prayer_method if user else "tehran"
+    times = PrayerService.calculate_times(city_name=city, method=method)
+    text = PrayerService.format_prayer_message(times)
+    await message.reply(text=text, parse_mode="HTML")
+
